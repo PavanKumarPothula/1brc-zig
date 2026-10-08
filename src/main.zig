@@ -1,202 +1,71 @@
 const std = @import("std");
-const builtin = @import("builtin");
+const Io = std.Io;
 
-const MAP_CAPACITY = 512 * 2 * 2;
+const _1brc_zig = @import("_1brc_zig");
 
-const T = i32;
-const F = f32;
+pub fn main(init: std.process.Init) !void {
+    // Prints to stderr, unbuffered, ignoring potential errors.
+    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
 
-const Stat = struct {
-    min: F,
-    max: F,
-    sum: F,
-    count: u32,
+    // This is appropriate for anything that lives as long as the process.
+    const arena: std.mem.Allocator = init.arena.allocator();
 
-    pub fn mergeIn(self: *Stat, other: Stat) void {
-        self.min = @min(self.min, other.min);
-        self.max = @max(self.max, other.max);
-        self.sum += other.sum;
-        self.count += other.count;
+    // Accessing command line arguments:
+    const args = try init.minimal.args.toSlice(arena);
+    for (args) |arg| {
+        std.log.info("arg: {s}", .{arg});
     }
-    pub fn addItem(self: *Stat, item: F) void {
-        self.min = @min(self.min, item);
-        self.max = @max(self.max, item);
-        self.sum += item;
-        self.count += 1;
-    }
-};
 
-const WorkerCtx = struct {
-    map: std.StringHashMap(Stat),
-    countries: std.ArrayList([]const u8),
+    // In order to do I/O operations need an `Io` instance.
+    const io = init.io;
 
-    pub fn init(allocator: std.mem.Allocator) !WorkerCtx {
-        var self: WorkerCtx = undefined;
-        self.map = std.StringHashMap(Stat).init(allocator);
-        try self.map.ensureTotalCapacity(MAP_CAPACITY);
-        self.countries = std.ArrayList([]const u8).init(allocator);
-        return self;
-    }
-    pub fn deinit(self: *WorkerCtx) void {
-        self.map.deinit();
-        self.countries.deinit();
-    }
-};
+    // Stdout is for the actual output of your application, for example if you
+    // are implementing gzip, then only the compressed bytes should be sent to
+    // stdout, not any debugging messages.
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_file_writer: Io.File.Writer = .init(.stdout(), io, &stdout_buffer);
+    const stdout_writer = &stdout_file_writer.interface;
 
-inline fn parseSimpleFloat(chunk: []const u8, pos: *usize) F {
-    var inum: i32 = 0;
-    var is_neg: bool = false;
-    for (0..6) |i| {
-        const idx = pos.* + i;
-        const item = chunk[idx];
-        switch (item) {
-            '-' => is_neg = true,
-            '0'...'9' => {
-                inum *= 10;
-                inum += item - '0';
-            },
-            '\n' => {
-                pos.* = idx + 1;
-                break;
-            },
-            else => {},
-        }
-    }
-    inum *= if (is_neg) -1 else 1;
-    const num: f32 = @as(f32, @floatFromInt(inum)) / 10;
-    return num;
+    try _1brc_zig.printAnotherMessage(stdout_writer);
+
+    try stdout_writer.flush(); // Don't forget to flush!
 }
 
-fn threadRun(
-    chunk: []const u8,
-    chunk_idx: usize,
-    main_ctx: *WorkerCtx,
-    main_mutex: *std.Thread.Mutex,
-    wg: *std.Thread.WaitGroup,
-) void {
-    defer wg.finish();
-    var ctx = WorkerCtx.init(std.heap.c_allocator) catch unreachable;
-    defer ctx.deinit();
-    std.log.debug("Running thread {}!", .{chunk_idx});
-    var pos: usize = 0;
-    while (pos < chunk.len) {
-        const new_pos = std.mem.indexOfScalarPos(u8, chunk, pos, ';') orelse chunk.len;
-        const city = chunk[pos..new_pos];
-        pos = new_pos + 1;
-        // the rest of the line is a (optional negative) float with 1-2 digits then 1 decimal place.
-        // -23.1, 1.2, -8.5
-        const num = parseSimpleFloat(chunk, &pos);
-        const entry = ctx.map.getOrPut(city) catch unreachable;
-        if (entry.found_existing) {
-            entry.value_ptr.addItem(num);
-        } else {
-            entry.value_ptr.* = Stat{ .min = num, .max = num, .sum = num, .count = 1 };
-        }
-    }
-
-    var it = ctx.map.iterator();
-    while (it.next()) |entry| {
-        const country = entry.key_ptr.*;
-        const stat = entry.value_ptr.*;
-        main_mutex.lock();
-        if (main_ctx.map.getPtr(country)) |main_stat| {
-            main_stat.mergeIn(stat);
-        } else {
-            main_ctx.countries.append(country) catch unreachable;
-            main_ctx.map.put(country, stat) catch unreachable;
-        }
-        main_mutex.unlock();
-    }
-    std.log.debug("Finished thread {}!", .{chunk_idx});
+test "simple test" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayList(i32) = .empty;
+    defer list.deinit(gpa); // Try commenting this out and see if zig detects the memory leak!
+    try list.append(gpa, 42);
+    try std.testing.expectEqual(@as(i32, 42), list.pop());
 }
 
-fn strLessThan(_: void, a: []const u8, b: []const u8) bool {
-    return std.mem.order(u8, a, b) == std.math.Order.lt;
+test "fuzz example" {
+    try std.testing.fuzz({}, testOne, .{});
 }
 
-pub fn main() !void {
-    std.log.debug("Starting!", .{});
-    var args = try std.process.argsWithAllocator(std.heap.c_allocator);
-    defer args.deinit();
-    _ = args.skip(); // skip program name
-    const file_name = args.next() orelse "measurements.txt";
-    const file = try std.fs.cwd().openFile(file_name, .{ .mode = .read_only });
-    defer file.close();
-    //
-    const file_len: usize = std.math.cast(usize, try file.getEndPos()) orelse std.math.maxInt(usize);
-    const mapped_mem = try std.os.mmap(
-        null,
-        file_len,
-        std.os.PROT.READ,
-        std.os.MAP.PRIVATE,
-        file.handle,
-        0,
-    );
-    defer std.os.munmap(mapped_mem);
-    if (builtin.os.tag == .linux) try std.os.madvise(mapped_mem.ptr, file_len, std.os.MADV.HUGEPAGE);
+fn testOne(context: void, smith: *std.testing.Smith) !void {
+    _ = context;
+    // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
 
-    var tp: std.Thread.Pool = undefined;
-    try tp.init(.{ .allocator = std.heap.c_allocator });
-    var wg = std.Thread.WaitGroup{};
-
-    var main_ctx = try WorkerCtx.init(std.heap.c_allocator);
-    defer main_ctx.deinit();
-    var main_mutex = std.Thread.Mutex{};
-
-    var chunk_start: usize = 0;
-    const job_count = try std.Thread.getCpuCount() - 1;
-    for (0..job_count) |i| {
-        const search_start = mapped_mem.len / job_count * (i + 1);
-        const chunk_end = std.mem.indexOfScalarPos(u8, mapped_mem, search_start, '\n') orelse mapped_mem.len;
-        const chunk: []const u8 = mapped_mem[chunk_start..chunk_end];
-        chunk_start = chunk_end + 1;
-        wg.start();
-        try tp.spawn(threadRun, .{ chunk, i, &main_ctx, &main_mutex, &wg });
-        if (chunk_start >= mapped_mem.len) break;
-    }
-    std.log.debug("Waiting and working", .{});
-    tp.waitAndWork(&wg);
-    std.log.debug("Finished waiting and working", .{});
-
-    std.mem.sortUnstable([]const u8, main_ctx.countries.items, {}, strLessThan);
-    std.debug.print("{{", .{});
-    for (main_ctx.countries.items, 0..) |country, i| {
-        const stat = main_ctx.map.get(country).?;
-        const avg = stat.sum / @as(F, @floatFromInt(stat.count));
-        std.debug.print("{s}={d:.1}/{d:.1}/{d:.1}", .{ country, stat.min, avg, stat.max });
-        if (i + 1 != main_ctx.countries.items.len) std.debug.print(", ", .{});
-    }
-    std.debug.print("}}\n", .{});
-}
-
-test "parseSimpleFloat - pos 3 digs" {
-    var pos: usize = 0;
-    const str = "12.1\n";
-    const num = parseSimpleFloat(str, &pos);
-    try std.testing.expectEqual(@as(F, 12.1), num);
-    try std.testing.expectEqual(str.len, pos);
-}
-
-test "parseSimpleFloat - neg 3 digs" {
-    var pos: usize = 0;
-    const str = "-25.8\n";
-    const num = parseSimpleFloat(str, &pos);
-    try std.testing.expectEqual(@as(F, -25.8), num);
-    try std.testing.expectEqual(str.len, pos);
-}
-
-test "parseSimpleFloat - pos 2 digs" {
-    var pos: usize = 0;
-    const str = "1.9\n";
-    const num = parseSimpleFloat(str, &pos);
-    try std.testing.expectEqual(@as(F, 1.9), num);
-    try std.testing.expectEqual(str.len, pos);
-}
-
-test "parseSimpleFloat - neg 2 digs" {
-    var pos: usize = 0;
-    const str = "-1.9\n";
-    const num = parseSimpleFloat(str, &pos);
-    try std.testing.expectEqual(@as(F, -1.9), num);
-    try std.testing.expectEqual(str.len, pos);
+    const gpa = std.testing.allocator;
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(gpa);
+    while (!smith.eos()) switch (smith.value(enum { add_data, dup_data })) {
+        .add_data => {
+            const slice = try list.addManyAsSlice(gpa, smith.value(u4));
+            smith.bytes(slice);
+        },
+        .dup_data => {
+            if (list.items.len == 0) continue;
+            if (list.items.len > std.math.maxInt(u32)) return error.SkipZigTest;
+            const len = smith.valueRangeAtMost(u32, 1, @min(32, list.items.len));
+            const off = smith.valueRangeAtMost(u32, 0, @intCast(list.items.len - len));
+            try list.appendSlice(gpa, list.items[off..][0..len]);
+            try std.testing.expectEqualSlices(
+                u8,
+                list.items[off..][0..len],
+                list.items[list.items.len - len ..],
+            );
+        },
+    };
 }
