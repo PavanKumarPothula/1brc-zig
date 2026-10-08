@@ -1,7 +1,13 @@
 const std = @import("std");
 
 pub fn main(init: std.process.Init) !void {
-    const fileName = "mini_measurements.txt";
+    var args = init.minimal.args.iterate();
+    defer args.deinit();
+    _ = args.skip();
+
+    const fileName = args.next().?;
+
+    // const fileName = "mini_measurements.txt";
     const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
     defer fileHandle.close(init.io);
 
@@ -23,6 +29,7 @@ pub fn main(init: std.process.Init) !void {
     // defer meanTemp.deinit();
 
     var cityMap: hashMapType = .init(childAlloc);
+    defer cityMap.deinit();
 
     while (try fileReader.interface.takeDelimiter('\n')) |line| {
         const index = std.mem.find(u8, line, ";").?;
@@ -30,6 +37,7 @@ pub fn main(init: std.process.Init) !void {
         const temp = try std.fmt.parseFloat(f16, line[index + 1 ..]);
 
         if (cityMap.get(cityName)) |currentData| {
+            std.debug.print("{s}\n", .{cityName});
             try cityMap.put(cityName, .{
                 .numRecords = currentData.numRecords + 1,
                 .meanTemp = ((1 / 1 + (1 / F16(currentData.numRecords))) * (currentData.meanTemp)) + (temp / F16(currentData.numRecords + 1)),
@@ -37,6 +45,7 @@ pub fn main(init: std.process.Init) !void {
                 .maxTemp = @max(temp, currentData.maxTemp),
             });
         } else {
+            std.debug.print("{s}\n", .{cityName});
             try cityMap.put(cityName, .{
                 .numRecords = 1,
                 .meanTemp = temp,
