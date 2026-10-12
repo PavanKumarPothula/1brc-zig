@@ -43,11 +43,14 @@ pub fn main(init: std.process.Init) !void {
             // const currentData = query.value_ptr;
             const oldCityName = query.key_ptr;
             std.debug.print("{s}\n", .{oldCityName.*});
-
-            query.value_ptr.meanTemp = ((1 / 1 + (1 / F16(query.value_ptr.numRecords))) * (query.value_ptr.meanTemp)) + (temp / F16(query.value_ptr.numRecords + 1));
+            std.debug.print("{d}::{d}::{d} + {d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp, temp });
+            query.value_ptr.meanTemp =
+                (query.value_ptr.meanTemp / (1 + (1 / F16(query.value_ptr.numRecords)))) + (temp / F16(query.value_ptr.numRecords + 1));
             query.value_ptr.numRecords = query.value_ptr.numRecords + 1;
             query.value_ptr.minTemp = @min(temp, query.value_ptr.minTemp);
             query.value_ptr.maxTemp = @max(temp, query.value_ptr.maxTemp);
+
+            std.debug.print("{d}::{d}::{d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp });
         } else {
             query.key_ptr.* = try keyAllocator.dupe(u8, line[0..index]);
             std.debug.print("{d}:::{d}:::{s}\n", .{ cityMap.capacity(), cityMap.count(), query.key_ptr.* });
@@ -55,19 +58,23 @@ pub fn main(init: std.process.Init) !void {
             query.value_ptr.meanTemp = temp;
             query.value_ptr.maxTemp = temp;
             query.value_ptr.minTemp = temp;
+            std.debug.print("{d}::{d}::{d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp });
         }
     }
-
-    const outFileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName + "_out.txt", .{ .mode = .read_write });
+    const outFileHandle = try std.Io.Dir.cwd().createFile(
+        init.io,
+        try std.fmt.allocPrint(keyAllocator, "{s}_out.txt", .{fileName}),
+        .{},
+    );
     defer outFileHandle.close(init.io);
     var outFileReader = outFileHandle.writer(init.io, &rwBuf);
     var iter = cityMap.iterator();
 
     while (iter.next()) |entry| {
-        // outFileReader.interface.writeAll(ubytes: []const u8)
-        std.debug.print("{s} :: {} \n", .{ entry.key_ptr.*, entry.value_ptr.*.numRecords });
+        try outFileReader.interface.print("{s}={d:.1}/{d:.1}/{d:.1},", .{ entry.key_ptr.*, entry.value_ptr.minTemp, entry.value_ptr.meanTemp, entry.value_ptr.maxTemp });
         // keyAllocator.free(entry.key_ptr);
     }
+    try outFileReader.interface.flush();
 }
 
 inline fn F16(int: anytype) f16 {
