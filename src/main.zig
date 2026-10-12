@@ -6,57 +6,67 @@ pub fn main(init: std.process.Init) !void {
     _ = args.skip();
 
     const fileName = args.next().?;
-
     // const fileName = "mini_measurements.txt";
     const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
     defer fileHandle.close(init.io);
 
-    var readBuf: [4096]u8 = undefined;
-    var fileReader = fileHandle.reader(init.io, &readBuf);
+    var rwBuf: [4096]u8 = undefined;
+
+    var fileReader = fileHandle.reader(init.io, &rwBuf);
 
     const TempStats = struct { numRecords: u128, meanTemp: f16, minTemp: f16, maxTemp: f16 };
     const hashMapType = std.StringHashMap(TempStats);
-    const childAlloc = std.heap.page_allocator;
-    // const mainAlloc = std.heap.ArenaAllocator;
 
-    // var cityList: std.ArrayList([]u8) = .empty;
-    // defer cityList.deinit(init.gpa);
-    // var minTemp: hashMap = .init(childAlloc);
-    // defer minTemp.deinit();
-    // var maxTemp: hashMap = .init(childAlloc);
-    // defer maxTemp.deinit();
-    // var meanTemp: hashMap = .init(childAlloc);
-    // defer meanTemp.deinit();
+    var areana: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+    defer areana.deinit();
+    const mapAllocator = areana.allocator();
 
-    var cityMap: hashMapType = .init(childAlloc);
-    defer cityMap.deinit();
+    var cityMap: hashMapType = .init(mapAllocator);
 
+    defer {
+        var key_iter = cityMap.keyIterator();
+        while (key_iter.next()) |key| {
+            mapAllocator.free(key.*);
+        }
+        cityMap.deinit();
+    }
+    // defer cityMap.deinit();
+
+    const keyAllocator = mapAllocator;
     while (try fileReader.interface.takeDelimiter('\n')) |line| {
         const index = std.mem.find(u8, line, ";").?;
-        const cityName = line[0..index];
+        // const cityName = line[0..index];
         const temp = try std.fmt.parseFloat(f16, line[index + 1 ..]);
+        const query = try cityMap.getOrPut(line[0..index]);
 
-        if (cityMap.get(cityName)) |currentData| {
-            std.debug.print("{s}\n", .{cityName});
-            try cityMap.put(cityName, .{
-                .numRecords = currentData.numRecords + 1,
-                .meanTemp = ((1 / 1 + (1 / F16(currentData.numRecords))) * (currentData.meanTemp)) + (temp / F16(currentData.numRecords + 1)),
-                .minTemp = @min(temp, currentData.minTemp),
-                .maxTemp = @max(temp, currentData.maxTemp),
-            });
+        if (query.found_existing) {
+            // const currentData = query.value_ptr;
+            const oldCityName = query.key_ptr;
+            std.debug.print("{s}\n", .{oldCityName.*});
+
+            query.value_ptr.meanTemp = ((1 / 1 + (1 / F16(query.value_ptr.numRecords))) * (query.value_ptr.meanTemp)) + (temp / F16(query.value_ptr.numRecords + 1));
+            query.value_ptr.numRecords = query.value_ptr.numRecords + 1;
+            query.value_ptr.minTemp = @min(temp, query.value_ptr.minTemp);
+            query.value_ptr.maxTemp = @max(temp, query.value_ptr.maxTemp);
         } else {
-            std.debug.print("{s}\n", .{cityName});
-            try cityMap.put(cityName, .{
-                .numRecords = 1,
-                .meanTemp = temp,
-                .maxTemp = temp,
-                .minTemp = temp,
-            });
+            query.key_ptr.* = try keyAllocator.dupe(u8, line[0..index]);
+            std.debug.print("{d}:::{d}:::{s}\n", .{ cityMap.capacity(), cityMap.count(), query.key_ptr.* });
+            query.value_ptr.numRecords = 1;
+            query.value_ptr.meanTemp = temp;
+            query.value_ptr.maxTemp = temp;
+            query.value_ptr.minTemp = temp;
         }
     }
+
+    const outFileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName + "_out.txt", .{ .mode = .read_write });
+    defer outFileHandle.close(init.io);
+    var outFileReader = outFileHandle.writer(init.io, &rwBuf);
     var iter = cityMap.iterator();
+
     while (iter.next()) |entry| {
+        // outFileReader.interface.writeAll(ubytes: []const u8)
         std.debug.print("{s} :: {} \n", .{ entry.key_ptr.*, entry.value_ptr.*.numRecords });
+        // keyAllocator.free(entry.key_ptr);
     }
 }
 
