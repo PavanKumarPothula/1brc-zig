@@ -7,23 +7,25 @@ This is based on the challenge here: https://github.com/gunnarmorling/1brc/.
 
 I decided to implement this in Zig as a learning experience.
 
-# Run
+# TODOs
+1. MultiThreading.
+2. Floating point math optimizations.
+3. SIMD.
+4. MMAP.
 
-First, you'll need a Zig binary from here: https://ziglang.org/download/.
-I'm using the latest master version: `zig-0.12.0-dev.2059`.
+# Plan and Progress
+## Rev-0
+It is taking 20min! with the crudest version.
+## Arch
+1. Read inputFile line by line.
+2. Add to the hashmap if new, else compute the new values and update the map.
+3. Once done, write the value to outfile one by one.
 
-Then run `zig build -Doptimize=ReleaseFast` to build.
 
-If you don't already have a `measurements.txt` file available, run `./zig-out/bin/run-create-sample 1000000000` to build your ~12GB input file.
-This can take several minutes.
-
-Now run `time ./zig-out/bin/1brc-zig measurements.txt`. 
-
-With a warm cache (as allowed by the challenge rules), I get this time on my AMD Ryzen 7 5800H:
-
-```
-Executed in    5.76 secs    fish           external
-   usr time   37.81 secs  129.00 micros   37.81 secs
-   sys time   10.11 secs  526.00 micros   10.11 secs
-```
-
+## Rev-1
+We'll use the multithreading for this:
+### Arch
+1. N workers will be spawned to read equally divided sections of the inputFile.
+2. Each worker will compute and build their own hashmaps for their sections.
+3. A seperate function will be reserved to merge all the maps into a final one.
+4. Once all are done, write to outFile in the main thread. 
