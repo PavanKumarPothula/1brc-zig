@@ -9,9 +9,11 @@ pub fn main(init: std.process.Init) !void {
     // const fileName = "mini_measurements.txt";
     const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
     defer fileHandle.close(init.io);
+    try task(fileHandle, init);
+}
 
+fn task(fileHandle: std.Io.File, init: std.process.Init) !void {
     var rwBuf: [4096]u8 = undefined;
-
     var fileReader = fileHandle.reader(init.io, &rwBuf);
 
     const TempStats = struct { numRecords: u128, meanTemp: f16, minTemp: f16, maxTemp: f16 };
@@ -41,31 +43,27 @@ pub fn main(init: std.process.Init) !void {
 
         if (query.found_existing) {
             // const currentData = query.value_ptr;
-            const oldCityName = query.key_ptr;
-            std.debug.print("{s}\n", .{oldCityName.*});
-            std.debug.print("{d}::{d}::{d} + {d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp, temp });
+            // const oldCityName = query.key_ptr;
+            // std.debug.print("{s}\n", .{oldCityName.*});
+            // std.debug.print("{d}::{d}::{d} + {d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp, temp });
             query.value_ptr.meanTemp =
                 (query.value_ptr.meanTemp / (1 + (1 / F16(query.value_ptr.numRecords)))) + (temp / F16(query.value_ptr.numRecords + 1));
             query.value_ptr.numRecords = query.value_ptr.numRecords + 1;
             query.value_ptr.minTemp = @min(temp, query.value_ptr.minTemp);
             query.value_ptr.maxTemp = @max(temp, query.value_ptr.maxTemp);
 
-            std.debug.print("{d}::{d}::{d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp });
+            // std.debug.print("{d}::{d}::{d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp });
         } else {
             query.key_ptr.* = try keyAllocator.dupe(u8, line[0..index]);
-            std.debug.print("{d}:::{d}:::{s}\n", .{ cityMap.capacity(), cityMap.count(), query.key_ptr.* });
+            // std.debug.print("{d}:::{d}:::{s}\n", .{ cityMap.capacity(), cityMap.count(), query.key_ptr.* });
             query.value_ptr.numRecords = 1;
             query.value_ptr.meanTemp = temp;
             query.value_ptr.maxTemp = temp;
             query.value_ptr.minTemp = temp;
-            std.debug.print("{d}::{d}::{d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp });
+            // std.debug.print("{d}::{d}::{d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp });
         }
     }
-    const outFileHandle = try std.Io.Dir.cwd().createFile(
-        init.io,
-        try std.fmt.allocPrint(keyAllocator, "{s}_out.txt", .{fileName}),
-        .{},
-    );
+    const outFileHandle = try std.Io.Dir.cwd().createFile(init.io, try std.fmt.allocPrint(keyAllocator, "{s}_out.txt", .{"hmm"}), .{ .exclusive = true });
     defer outFileHandle.close(init.io);
     var outFileReader = outFileHandle.writer(init.io, &rwBuf);
     var iter = cityMap.iterator();
@@ -76,7 +74,6 @@ pub fn main(init: std.process.Init) !void {
     }
     try outFileReader.interface.flush();
 }
-
 inline fn F16(int: anytype) f16 {
     return @floatFromInt(int);
 }
