@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const NUM_THREADS = 12;
+
 pub fn main(init: std.process.Init) !void {
     var args = init.minimal.args.iterate();
     defer args.deinit();
@@ -7,12 +9,16 @@ pub fn main(init: std.process.Init) !void {
 
     const fileName = args.next().?;
     // const fileName = "mini_measurements.txt";
-    const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
-    defer fileHandle.close(init.io);
-    try task(fileHandle, init);
+    for (1..NUM_THREADS) |tid| {
+        const thread_handle = try std.Thread.spawn(.{}, task, .{ fileName, tid, init });
+        thread_handle.join();
+    }
 }
 
-fn task(fileHandle: std.Io.File, init: std.process.Init) !void {
+fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
+    _ = threadId;
+    const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
+    defer fileHandle.close(init.io);
     var rwBuf: [4096]u8 = undefined;
     var fileReader = fileHandle.reader(init.io, &rwBuf);
 
