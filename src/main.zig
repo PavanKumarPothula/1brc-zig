@@ -8,11 +8,29 @@ pub fn main(init: std.process.Init) !void {
     _ = args.skip();
 
     const fileName = args.next().?;
-    // const fileName = "mini_measurements.txt";
-    for (1..NUM_THREADS) |tid| {
-        const thread_handle = try std.Thread.spawn(.{}, task, .{ fileName, tid, init });
-        thread_handle.join();
+    const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
+    defer fileHandle.close(init.io);
+    var rwBuf: [256]u8 = undefined;
+    var fileReader = fileHandle.reader(init.io, &rwBuf);
+
+    var count: usize = 0;
+    const start_time = std.Io.Clock.awake.now(init.io);
+    while (true) {
+        const line = fileReader.interface.takeDelimiterInclusive('\n') catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        // std.debug.print("line:{s}::bytes:{d}\n", .{ line, line.len });
+        count += line.len;
     }
+
+    const elapsed = start_time.untilNow(init.io, .awake);
+    std.debug.print("Elapsed time: {} s\n", .{elapsed.toSeconds()});
+    std.debug.print("final bytecount:{d}\n", .{count});
+    // for (1..NUM_THREADS) |tid| {
+    //     const thread_handle = try std.Thread.spawn(.{}, task, .{ fileName, tid, init });
+    //     thread_handle.join();
+    // }
 }
 
 fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
@@ -38,12 +56,10 @@ fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
         }
         cityMap.deinit();
     }
-    // defer cityMap.deinit();
 
     const keyAllocator = mapAllocator;
     while (try fileReader.interface.takeDelimiter('\n')) |line| {
         const index = std.mem.find(u8, line, ";").?;
-        // const cityName = line[0..index];
         const temp = try std.fmt.parseFloat(f16, line[index + 1 ..]);
         const query = try cityMap.getOrPut(line[0..index]);
 
@@ -76,10 +92,10 @@ fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
 
     while (iter.next()) |entry| {
         try outFileReader.interface.print("{s}={d:.1}/{d:.1}/{d:.1},", .{ entry.key_ptr.*, entry.value_ptr.minTemp, entry.value_ptr.meanTemp, entry.value_ptr.maxTemp });
-        // keyAllocator.free(entry.key_ptr);
     }
     try outFileReader.interface.flush();
 }
+
 inline fn F16(int: anytype) f16 {
     return @floatFromInt(int);
 }
