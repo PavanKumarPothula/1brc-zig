@@ -1,36 +1,68 @@
 const std = @import("std");
 
-const NUM_THREADS = 12;
+var NUM_THREADS: usize = undefined;
+// var remainingBytes_Lock: std.Io.Mutex = .init;
+// var remainingBytes: usize = undefined;
+var BLOCK_SIZE: usize = undefined;
+const MAX_LINE_LENGTH: usize= 32;
 
 pub fn main(init: std.process.Init) !void {
     var args = init.minimal.args.iterate();
     defer args.deinit();
     _ = args.skip();
 
+    NUM_THREADS = try std.Thread.getCpuCount();
+
     const fileName = args.next().?;
-    const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
+    const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{ .mode = .read_only });
     defer fileHandle.close(init.io);
-    var rwBuf: [256]u8 = undefined;
-    var fileReader = fileHandle.reader(init.io, &rwBuf);
 
-    var count: usize = 0;
-    const start_time = std.Io.Clock.awake.now(init.io);
-    while (true) {
-        const line = fileReader.interface.takeDelimiterInclusive('\n') catch |err| switch (err) {
-            error.EndOfStream => break,
-            else => return err,
-        };
-        // std.debug.print("line:{s}::bytes:{d}\n", .{ line, line.len });
-        count += line.len;
-    }
+    const fileStat = try fileHandle.stat(init.io);
+    BLOCK_SIZE = fileStat.block_size;
+    // remainingBytes = fileStat.size;
+    // remainingBytes_Lock.unlock(init.io);
 
-    const elapsed = start_time.untilNow(init.io, .awake);
-    std.debug.print("Elapsed time: {} s\n", .{elapsed.toSeconds()});
-    std.debug.print("final bytecount:{d}\n", .{count});
+
     // for (1..NUM_THREADS) |tid| {
     //     const thread_handle = try std.Thread.spawn(.{}, task, .{ fileName, tid, init });
     //     thread_handle.join();
     // }
+    const offset = 0;
+    const lengthToLoad = fileStat.size;
+    try scanFile(init, fileHandle,lengthToLoad, offset);
+}
+
+fn scanFile(init: std.process.Init, fileHandle: std.Io.File, lengthToLoad:usize, offset: usize) !void {
+    // try remainingBytes_Lock.lock(init.io);
+
+    // remainingBytes_Lock.unlock(init.io);
+    var mmap = try fileHandle.createMemoryMap(init.io, .{.len = lengthToLoad,.offset = offset,.protection = .{ .write = false }});
+    defer @constCast(&mmap).destroy(init.io);
+    try mmap.read(init.io);
+    // var fileReader = readMemory.reader(init.io, &rwBuf);
+    var count: usize = 0;
+    const start_time = std.Io.Clock.awake.now(init.io);
+    var current_offset : usize= 0;
+    var rwBuf: [MAX_LINE_LENGTH] u8 = undefined;
+    while (true) {
+    @memcpy(&rwBuf,mmap.memory[current_offset..(current_offset+MAX_LINE_LENGTH)]);
+    const line_ending_index  = std.mem.findScalar(u8,&rwBuf,'\n') orelse break;
+
+     std.debug.print("rwBuf: {s}", .{rwBuf});
+
+        // const line = fileReader.interface.takeDelimiterInclusive('\n') catch |err| switch (err) {
+        //     error.EndOfStream => break,
+        //     else => return err,
+        // };
+        count += line_ending_index-current_offset;
+        std.debug.print("line:{s}::bytes:{d}\n", .{ rwBuf, line_ending_index-current_offset });
+        current_offset = line_ending_index+1;
+
+    }
+
+    const elapsed = start_time.untilNow(init.io, .awake);
+    std.debug.print("Elapsed time: {} us\n", .{elapsed.toMicroseconds()});
+    std.debug.print("final bytecount:{d}\n", .{count});
 }
 
 fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
@@ -99,3 +131,5 @@ fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
 inline fn F16(int: anytype) f16 {
     return @floatFromInt(int);
 }
+
+// test

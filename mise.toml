@@ -1,0 +1,4 @@
+[tools]
+hyperfine = "latest"
+zig = "0.16"
+zls = "0.16"
