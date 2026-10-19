@@ -2,3 +2,4 @@ zig-cache/
 zig-out/
 measurements.txt
 /.zig-cache
+hmm_out.txt

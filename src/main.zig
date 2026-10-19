@@ -29,48 +29,24 @@ pub fn main(init: std.process.Init) !void {
     // }
     const offset = 0;
     const lengthToLoad = fileStat.size;
-    try scanFile(init, fileHandle,lengthToLoad, offset);
+    try task(init, fileHandle,lengthToLoad, offset);
 }
 
-fn scanFile(init: std.process.Init, fileHandle: std.Io.File, lengthToLoad:usize, offset: usize) !void {
-    // try remainingBytes_Lock.lock(init.io);
+fn task(init: std.process.Init, fileHandle: std.Io.File, lengthToLoad:usize, offset: usize) !void {
+// fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
+    // _ = threadId;
+    // const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
+    // defer fileHandle.close(init.io);
+    // var rwBuf: [4096]u8 = undefined;
+    // var fileReader = fileHandle.reader(init.io, &rwBuf);
 
-    // remainingBytes_Lock.unlock(init.io);
-    var mmap = try fileHandle.createMemoryMap(init.io, .{.len = lengthToLoad,.offset = offset,.protection = .{ .write = false }});
+    var mmap = try fileHandle.createMemoryMap(init.io, .{.len = lengthToLoad,.offset = offset,.protection = .{.write = false,.read = true,.execute = false}});
     defer @constCast(&mmap).destroy(init.io);
     try mmap.read(init.io);
-    // var fileReader = readMemory.reader(init.io, &rwBuf);
     var count: usize = 0;
     const start_time = std.Io.Clock.awake.now(init.io);
-    var current_offset : usize= 0;
-    var rwBuf: [MAX_LINE_LENGTH] u8 = undefined;
-    while (true) {
-    @memcpy(&rwBuf,mmap.memory[current_offset..(current_offset+MAX_LINE_LENGTH)]);
-    const line_ending_index  = std.mem.findScalar(u8,&rwBuf,'\n') orelse break;
+    var reader = std.Io.Reader.fixed(mmap.memory);
 
-     std.debug.print("rwBuf: {s}", .{rwBuf});
-
-        // const line = fileReader.interface.takeDelimiterInclusive('\n') catch |err| switch (err) {
-        //     error.EndOfStream => break,
-        //     else => return err,
-        // };
-        count += line_ending_index-current_offset;
-        std.debug.print("line:{s}::bytes:{d}\n", .{ rwBuf, line_ending_index-current_offset });
-        current_offset = line_ending_index+1;
-
-    }
-
-    const elapsed = start_time.untilNow(init.io, .awake);
-    std.debug.print("Elapsed time: {} us\n", .{elapsed.toMicroseconds()});
-    std.debug.print("final bytecount:{d}\n", .{count});
-}
-
-fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
-    _ = threadId;
-    const fileHandle = try std.Io.Dir.cwd().openFile(init.io, fileName, .{});
-    defer fileHandle.close(init.io);
-    var rwBuf: [4096]u8 = undefined;
-    var fileReader = fileHandle.reader(init.io, &rwBuf);
 
     const TempStats = struct { numRecords: u128, meanTemp: f16, minTemp: f16, maxTemp: f16 };
     const hashMapType = std.StringHashMap(TempStats);
@@ -90,9 +66,17 @@ fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
     }
 
     const keyAllocator = mapAllocator;
-    while (try fileReader.interface.takeDelimiter('\n')) |line| {
+
+    var rwBuf: [64] u8 = undefined;
+    while (true) {
+        const line = reader.takeDelimiterInclusive('\n') catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        count += line.len;
+        // std.debug.print("line:{s}", .{line});
         const index = std.mem.find(u8, line, ";").?;
-        const temp = try std.fmt.parseFloat(f16, line[index + 1 ..]);
+        const temp = try std.fmt.parseFloat(f16, line[index + 1 ..line.len-1]);
         const query = try cityMap.getOrPut(line[0..index]);
 
         if (query.found_existing) {
@@ -117,7 +101,8 @@ fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
             // std.debug.print("{d}::{d}::{d}\n", .{ query.value_ptr.minTemp, query.value_ptr.meanTemp, query.value_ptr.maxTemp });
         }
     }
-    const outFileHandle = try std.Io.Dir.cwd().createFile(init.io, try std.fmt.allocPrint(keyAllocator, "{s}_out.txt", .{"hmm"}), .{ .exclusive = true });
+    mmap.destroy(init.io);
+    const outFileHandle = try std.Io.Dir.cwd().createFile(init.io, try std.fmt.allocPrint(keyAllocator, "{s}_out.txt", .{"hmm"}), .{});
     defer outFileHandle.close(init.io);
     var outFileReader = outFileHandle.writer(init.io, &rwBuf);
     var iter = cityMap.iterator();
@@ -126,6 +111,11 @@ fn task(fileName: [:0]const u8, threadId: usize, init: std.process.Init) !void {
         try outFileReader.interface.print("{s}={d:.1}/{d:.1}/{d:.1},", .{ entry.key_ptr.*, entry.value_ptr.minTemp, entry.value_ptr.meanTemp, entry.value_ptr.maxTemp });
     }
     try outFileReader.interface.flush();
+
+    const elapsed = start_time.untilNow(init.io, .awake);
+    _ = elapsed; // autofix
+    // std.debug.print("Elapsed time: {} us\n", .{elapsed.toMicroseconds()});
+    // std.debug.print("final bytecount:{d}\n", .{count});
 }
 
 inline fn F16(int: anytype) f16 {
